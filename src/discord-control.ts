@@ -204,6 +204,12 @@ export class DiscordControl {
   }
 
   private async register(guild: Guild): Promise<void> {
+    if (!this.config.allowedGuilds.includes(guild.id)) {
+      // Auth would deny every command here anyway; not registering keeps the
+      // command invisible to guilds that merely added the application.
+      log(`guild ${guild.name} (${guild.id}) is not in allowedGuilds — not registering /cc`);
+      return;
+    }
     try {
       const app = this.client?.application;
       if (!app) return;

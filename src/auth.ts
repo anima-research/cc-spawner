@@ -9,8 +9,8 @@
  *    (list_members RPC + 60s cache); fetch failure ⇒ roles undefined ⇒ only
  *    the allowedUsers leg can pass.
  *
- * Fail closed on every uncertain path: no guild, unknown roles, empty
- * allow-lists.
+ * Fail closed on every uncertain path: no guild, guild not allow-listed,
+ * unknown roles, empty allow-lists.
  */
 import type { PortalClient } from '@animalabs/portal-client';
 
@@ -29,6 +29,8 @@ export interface Invoker {
 }
 
 export interface AuthConfig {
+  /** Guild gate, evaluated before every other leg. Empty ⇒ deny. */
+  allowedGuilds: string[];
   allowedUsers: string[];
   allowedRoles: Record<string, string[]>;
   /** Resident ids allowed to drive the spawner — portal persona ids AND/OR
@@ -46,6 +48,9 @@ export interface AuthResult {
 export function isAllowed(invoker: Invoker, guildId: string | null, cfg: AuthConfig): AuthResult {
   if (!guildId) {
     return { ok: false, reason: 'spawner commands only work in a guild channel (no DMs)' };
+  }
+  if (!cfg.allowedGuilds.includes(guildId)) {
+    return { ok: false, reason: 'this guild is not allow-listed for cc-spawner' };
   }
   if (invoker.kind === 'resident') {
     // Residents get a dedicated allowlist; user legs (roles/ManageGuild) don't

@@ -19,6 +19,14 @@ export interface SpawnerConfig {
   /** The spawner's own portal persona name. */
   personaName: string;
   /**
+   * Guilds the spawner may be driven from at all. Checked BEFORE every other
+   * auth leg (users, residents, roles, Manage-Server), and the slash layer
+   * only registers /cc in these guilds. Empty/missing ⇒ deny everywhere
+   * (fail closed): otherwise anyone who adds the bot application to their
+   * own guild and holds Manage Server there could list/peek/stop hands.
+   */
+  allowedGuilds: string[];
+  /**
    * Discord-role-based authorization: guildId → role ids whose holders may
    * drive the spawner. Key "*" is a global list unioned into every guild.
    * Empty/missing ⇒ deny (fail closed).
@@ -84,6 +92,7 @@ const DEFAULTS: SpawnerConfig = {
   url: 'wss://portal.animalabs.ai',
   invite: '', // set in ~/.portal/cc-spawner.config.json — never in source
   personaName: 'cc-spawner',
+  allowedGuilds: [],
   allowedRoles: {},
   allowedUsers: [],
   allowedResidents: [],
@@ -147,6 +156,9 @@ export function loadConfig(): SpawnerConfig {
 
   if (!existsSync(cfg.ccCli)) {
     throw new Error(`ccCli not built at ${cfg.ccCli} — (cd portal-stack/portal-mcpl && npm i && npm run build)`);
+  }
+  if (cfg.allowedGuilds.length === 0) {
+    console.warn('[config] allowedGuilds is empty — ALL commands will be denied and /cc will not be registered anywhere until it is populated');
   }
   const anyRoles = Object.values(cfg.allowedRoles).some((r) => r.length > 0);
   if (!anyRoles && cfg.allowedUsers.length === 0) {

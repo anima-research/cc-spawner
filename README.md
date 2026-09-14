@@ -103,10 +103,13 @@ intent).
 node dist/src/main.js   # foreground (first run writes a template config)
 ```
 
-Fill in `~/.portal/cc-spawner.config.json` → `allowedRoles`
+Fill in `~/.portal/cc-spawner.config.json` → `allowedGuilds`
+(`["<guildId>", …]` — the only guilds the spawner answers in; `/cc` is
+registered nowhere else, and every command elsewhere is denied regardless
+of the legs below), then `allowedRoles`
 (`{"<guildId>": ["<roleId>", …], "*": […]}`) and/or `allowedUsers`
 (`["<discordUserId>", …]`, checked first, no roster lookup). Both empty means
-**deny everyone** (fail closed). The role leg needs the relay's GuildMembers
+**deny everyone** (fail closed), as does an empty `allowedGuilds`. The role leg needs the relay's GuildMembers
 intent (`list_members` → `membersAvailable:true`; if it reports false the role leg denies everything and only
 `allowedUsers` works). Note the relay reports @everyone (id = guildId) as a
 held role, so allow-listing a guild's own id = anyone in that guild. Server
