@@ -29,6 +29,9 @@ import { capturePane, hasSession, newSession, sendKeys } from './tmux.js';
 export interface LaunchRequest {
   personaName: string;
   model: string;
+  /** Reasoning effort, already validated for this engine (commands.ts).
+   *  Absent ⇒ no flag: the CLI's own default applies. */
+  effort?: string;
   seedFile: string;
   /** Claude Code conversation id. Assigned on a first launch, reused on revival. */
   sessionId: string;
@@ -108,6 +111,9 @@ export class ClaudeCodeLauncher implements Launcher {
 
     const command = [
       'env',
+      // CLAUDE_CODE_EFFORT_LEVEL outranks --effort (verified 2026-09-30, claude
+      // 2.1.286); don't let one inherited from the daemon's environment win.
+      ...(req.effort ? ['-u CLAUDE_CODE_EFFORT_LEVEL'] : []),
       `PORTAL_PERSONA_NAME=${shq(req.personaName)}`,
       `PORTAL_SUBSCRIPTIONS=${shq(req.channelId)}`,
       `PORTAL_CONTEXT_CAP=${shq(String(this.config.contextCap))}`,
@@ -118,6 +124,10 @@ export class ClaudeCodeLauncher implements Launcher {
       // durable transcript across any number of revivals.
       req.resume ? `--resume ${shq(req.sessionId)}` : `--session-id ${shq(req.sessionId)}`,
       `--model ${shq(req.model)}`,
+      // Effort is session-scoped and NOT restored by --resume, so it is passed
+      // on every launch. `--effort ultracode` = xhigh + ultracode (verified
+      // 2026-09-30, claude 2.1.286; `--help` does not list it).
+      ...(req.effort ? [`--effort ${shq(req.effort)}`] : []),
       `"$(cat ${shq(req.seedFile)})"`,
     ].join(' ');
 
@@ -204,6 +214,10 @@ export class CodexLauncher implements Launcher {
     const opts = [
       '--dangerously-bypass-approvals-and-sandbox', // = --yolo
       `-m ${shq(req.model)}`,
+      // No dedicated flag; `codex resume` does not restore it either, so it is
+      // in the shared opts (verified 2026-09-30, codex 0.155.1). Quoted as a
+      // TOML string: a bare non-string value fails config bootstrap.
+      ...(req.effort ? [`-c ${shq(`model_reasoning_effort=${toml(req.effort)}`)}`] : []),
       `-c ${shq('mcp_servers.portal.command="node"')}`,
       `-c ${shq(`mcp_servers.portal.args=[${toml(this.config.ccCli)}]`)}`,
       `-c ${shq(`mcp_servers.portal.env=${env}`)}`,

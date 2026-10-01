@@ -12,7 +12,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PortalClient } from '@animalabs/portal-client';
 import { isAllowed, type Invoker } from './auth.js';
-import { PEEK_DEFAULT_LINES, USAGE, isBareFamilyAlias, modelSlug, type Command } from './commands.js';
+import { EFFORT_DEFAULT, PEEK_DEFAULT_LINES, USAGE, effortError, isBareFamilyAlias, modelSlug, type Command } from './commands.js';
 import { sendKeys, sendText } from './tmux.js';
 import { PORTAL_DIR, type SpawnerConfig } from './config.js';
 import { slugPersonaName, type Launcher } from './launcher.js';
@@ -37,6 +37,11 @@ const log = (msg: string) => console.log(`${new Date().toISOString()} [actions] 
 /** Inline code block must stay under Discord's 2000-char message limit,
  *  leaving room for the header and fences. */
 const PEEK_INLINE_BUDGET = 1700;
+
+/** `model` or `model, effort <level>` — effort shown only when explicitly set. */
+function modelLabel(e: { model: string; effort?: string }): string {
+  return e.effort ? `${e.model}, effort ${e.effort}` : e.model;
+}
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -256,6 +261,16 @@ export class SpawnerActions {
       }
     }
 
+    // Effort is not part of the identity. A revival keeps the stored effort
+    // unless told otherwise (`effort=default` clears it); neither CLI restores
+    // it on resume, so it is re-passed on every launch.
+    const effort = cmd.effort === EFFORT_DEFAULT ? undefined : cmd.effort ?? prior?.effort;
+    if (effort && !cmd.effort) {
+      // Inherited: a legacy identity may now be on a different model.
+      const error = effortError(effort, cmd.engine, cmd.model);
+      if (error) return `Stored ${error} (or \`effort=${EFFORT_DEFAULT}\`).`;
+    }
+
     let personaId: string;
     try {
       const code = reviving
@@ -297,6 +312,7 @@ export class SpawnerActions {
       result = await launcher.launch({
         personaName,
         model: cmd.model,
+        effort,
         seedFile,
         channelId: inv.channelId,
         tmuxSession,
@@ -326,6 +342,7 @@ export class SpawnerActions {
       sessionId: result.sessionId ?? (cmd.engine === 'codex' ? undefined : sessionId),
       wake: result.wake,
       model: cmd.model,
+      effort,
       spawnedBy: { userId: inv.invoker.id, username: inv.invoker.name },
       spawnedAt: new Date().toISOString(),
       lastActivity: new Date().toISOString(),
@@ -337,15 +354,16 @@ export class SpawnerActions {
     };
     this.registry.add(entry);
 
+    const label = modelLabel({ model: cmd.model, effort });
     const note = result.warning ? `\n⚠️ ${result.warning}` : '';
     if (canResume) {
       const legacyNote = legacy ? ` *(legacy identity from the bare-\`${personaName.split('-')[2]}\` era, now explicitly on ${cmd.model})*` : '';
-      return `Revived **${personaName}** (${cmd.model}) in tmux \`${tmuxSession}\` — same identity **and** same conversation; it still remembers its earlier work and is catching up on the channel.${legacyNote}${note}`;
+      return `Revived **${personaName}** (${label}) in tmux \`${tmuxSession}\` — same identity **and** same conversation; it still remembers its earlier work and is catching up on the channel.${legacyNote}${note}`;
     }
     const amnesia = lostContext
       ? `\n⚠️ Its previous transcript is gone, so it starts fresh — same name and Discord identity, no memory of before.`
       : '';
-    return `Spawned **${personaName}** (${cmd.model}) in tmux \`${tmuxSession}\` — it should introduce itself here shortly.${amnesia}${note}`;
+    return `Spawned **${personaName}** (${label}) in tmux \`${tmuxSession}\` — it should introduce itself here shortly.${amnesia}${note}`;
   }
 
   private list(): string {
@@ -354,7 +372,7 @@ export class SpawnerActions {
     const lines = alive.map((e) => {
       const idleMin = Math.round((Date.now() - lastActivityMs(e)) / 60_000);
       const chan = this.client.cache.getChannel(e.channelId)?.name ?? e.channelId;
-      return `• **${e.personaName}** (${e.model}) — #${chan}, tmux \`${e.tmuxSession}\`, idle ${formatIdle(idleMin)}`;
+      return `• **${e.personaName}** (${modelLabel(e)}) — #${chan}, tmux \`${e.tmuxSession}\`, idle ${formatIdle(idleMin)}`;
     });
     return `${alive.length}/${this.config.maxSessions} bots:\n${lines.join('\n')}`;
   }
@@ -400,7 +418,7 @@ export class SpawnerActions {
     const lines = pane.replace(/\s+$/, '').split('\n').filter((l) => l.trim());
     const tail = lines.slice(-want).join('\n');
     const header = [
-      `**${entry.personaName}** (${entry.model}) — tmux \`${entry.tmuxSession}\``,
+      `**${entry.personaName}** (${modelLabel(entry)}) — tmux \`${entry.tmuxSession}\``,
       `up ${uptime === undefined ? '?' : formatDuration(uptime)} · last public activity ${formatIdle(idleMin)} ago · spawned by @${entry.spawnedBy.username}`,
     ].join('\n');
 

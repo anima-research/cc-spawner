@@ -30,7 +30,7 @@ import {
   type Guild,
 } from 'discord.js';
 import type { SpawnerActions, Invocation } from './actions.js';
-import { CODEX_MODEL_CHOICES, MODEL_CHOICES, buildAnswerCommand, buildPeekCommand, buildPressCommand, buildSpawnCommand, buildStopCommand, type Command } from './commands.js';
+import { CODEX_MODEL_CHOICES, EFFORT_CHOICES, MODEL_CHOICES, buildAnswerCommand, buildPeekCommand, buildPressCommand, buildSpawnCommand, buildStopCommand, type Command } from './commands.js';
 import type { SpawnerConfig } from './config.js';
 import type { Invoker } from './auth.js';
 
@@ -54,7 +54,7 @@ const CC_COMMAND = {
         {
           type: ApplicationCommandOptionType.String as const,
           name: 'model',
-          description: 'Explicit model: fable-5-1, fable-5, opus-5, sonnet-5, gpt-5.6-luna (codex) … or a full id',
+          description: 'Explicit model: fable-5-1, opus-5-5, sonnet-5-5, gpt-6-astra (codex) … or a full id',
           required: true,
           autocomplete: true,
         },
@@ -73,6 +73,14 @@ const CC_COMMAND = {
             { name: 'claude', value: 'claude' },
             { name: 'codex', value: 'codex' },
           ],
+        },
+        {
+          type: ApplicationCommandOptionType.String as const,
+          name: 'effort',
+          description: 'Reasoning effort (kept across revivals). ultracode: claude only · ultra: codex only',
+          required: false,
+          // Static union; buildSpawnCommand validates per engine and model.
+          choices: EFFORT_CHOICES.map((e) => ({ name: e, value: e })),
         },
       ],
     },
@@ -267,6 +275,7 @@ export class DiscordControl {
           interaction.options.getString('model') ?? undefined,
           interaction.options.getString('name') ?? undefined,
           interaction.options.getString('engine') ?? undefined,
+          interaction.options.getString('effort') ?? undefined,
         );
         break;
       case 'list':

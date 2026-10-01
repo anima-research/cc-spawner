@@ -3,7 +3,7 @@
  *
  * Text grammar (portal @-mentions, over cleanContent with leading mention
  * tokens stripped):
- *   spawn <model> [name=<friendly>] [engine=claude]
+ *   spawn <model> [name=<friendly>] [engine=claude|codex] [effort=<level>]
  *   list
  *   stop <name>        (alias: kill)
  *   help
@@ -12,7 +12,7 @@
  * uses buildSpawnCommand/buildStopCommand for the same validation.
  */
 export type Command =
-  | { kind: 'spawn'; model: string; friendly?: string; engine: Engine }
+  | { kind: 'spawn'; model: string; friendly?: string; engine: Engine; effort?: string }
   | { kind: 'list' }
   | { kind: 'stop'; target: string }
   | { kind: 'peek'; target: string; lines?: number }
@@ -38,9 +38,61 @@ export function inferEngine(model: string): Engine {
 }
 const FRIENDLY_RE = /^[A-Za-z0-9-]{1,24}$/;
 
+/**
+ * Reasoning effort per engine. Neither CLI rejects a bad value at launch
+ * (claude 2.1.286 warns and falls back to its default; codex 0.155.1 takes any
+ * string and only fails on the first turn), so the spawner validates.
+ *  - claude: `--effort` levels; `ultracode` = xhigh + standing workflow
+ *    orchestration (accepted by `--effort`, though `--help` omits it).
+ *  - codex: `model_reasoning_effort` values that at least one model supports
+ *    (~/.codex/models_cache.json, 2026-09-30). Support varies per model —
+ *    e.g. gpt-5.5 stops at xhigh — and the cache drifts, so no per-model table.
+ */
+export const EFFORT_LEVELS: Readonly<Record<Engine, readonly string[]>> = {
+  claude: ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
+  codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+};
+/** `effort=default` passes no flag and drops an effort inherited on revival. */
+export const EFFORT_DEFAULT = 'default';
+/** Union for the slash surface's static choices (validated per engine here). */
+export const EFFORT_CHOICES = [EFFORT_DEFAULT, ...new Set([...EFFORT_LEVELS.claude, ...EFFORT_LEVELS.codex])];
+
+// Claude models the CLI (2.1.286) silently clamps or drops effort on, so the
+// hand would run at a level other than the one shown in `list`. Refuse up front.
+// No xhigh capability (which ultracode also needs): 3.x, Opus 4.0/4.1/4.5/4.6,
+// Sonnet 4.x, Haiku 4.5 — the CLI runs xhigh at high and ignores ultracode.
+const NO_ULTRACODE_RE = /claude-3|haiku-[34]|sonnet-4|opus-4(?:-[0156])?(?:-\d{8})?(?![-.]?\d)/i;
+// No max capability: Opus 4.0/4.1/4.5 (the CLI runs max at high). Opus 4.6+
+// and the 5.x models take max; the no-effort models below are refused earlier.
+const NO_MAX_RE = /opus-4(?:-[015])?(?:-\d{8})?(?![-.]?\d)/i;
+// No effort parameter at all — the CLI drops any --effort: 3.x, Sonnet 4.0/4.5
+// (dated snapshots included; Sonnet 4.6 takes effort), Haiku 3.x/4.5.
+const NO_EFFORT_RE = /claude-3-|haiku-[34]|sonnet-4(?:-[05])?(?:-\d{8})?(?![-.]?\d)/i;
+
+/** Validate an effort for an engine + (resolved) model. Returns an error
+ *  string in the `help` style, or undefined when it is fine. */
+export function effortError(effort: string, engine: Engine, model: string): string | undefined {
+  if (effort === EFFORT_DEFAULT) return undefined;
+  const levels = EFFORT_LEVELS[engine];
+  const valid = `${levels.map((l) => `\`${l}\``).join(', ')}, or \`${EFFORT_DEFAULT}\``;
+  if (effort === 'ultracode' && engine === 'codex') {
+    return `effort \`ultracode\` is Claude Code only — codex takes ${valid}`;
+  }
+  if (!levels.includes(effort)) return `effort \`${effort}\` not supported for ${engine} — ${valid}`;
+  if (engine !== 'claude') return undefined;
+  if (NO_EFFORT_RE.test(model)) return `\`${model}\` has no effort setting — drop \`effort=\``;
+  if (effort === 'ultracode' && NO_ULTRACODE_RE.test(model)) {
+    return `effort \`ultracode\` is not available on \`${model}\` — pick a 5.x model (or Opus 4.7/4.8), or a plain level`;
+  }
+  if ((effort === 'xhigh' && NO_ULTRACODE_RE.test(model)) || (effort === 'max' && NO_MAX_RE.test(model))) {
+    return `effort \`${effort}\` is not available on \`${model}\` — the CLI would silently run it at \`high\`; pick \`high\` or a newer model`;
+  }
+  return undefined;
+}
+
 export const USAGE = [
   'Usage:',
-  '`spawn <model> [name=<friendly>] [engine=claude|codex]` — spawn a bot here (model required, explicit: fable-5-1, fable-5, opus-5, sonnet-5, haiku-4-5, … or a full id; gpt-* models run on codex)',
+  '`spawn <model> [name=<friendly>] [engine=claude|codex] [effort=<level>]` — spawn a bot here (model required, explicit: fable-5-1, fable-5, opus-5-5, opus-5, sonnet-5-5, sonnet-5, haiku-4-5, … or a full id; gpt-* models run on codex; effort: low, medium, high, xhigh, max, plus `ultracode` on claude / `ultra` on codex — kept across revivals, `effort=default` clears it)',
   '`list` — show running bots',
   '`stop <name>` — stop a bot (by friendly name, suffix, or persona name; identity is kept)',
   '`peek <name> [lines]` — DM yourself the bot\'s terminal tail (default 20 lines; slash surface only)',
@@ -96,10 +148,12 @@ export function buildPressCommand(target: string | undefined, keys: string | und
 export const MODEL_ALIASES: Readonly<Record<string, string>> = {
   'fable-5-1': 'claude-fable-5-1',
   'fable-5': 'claude-fable-5',
+  'opus-5-5': 'claude-opus-5-5',
   'opus-5': 'claude-opus-5',
   'opus-4-8': 'claude-opus-4-8',
   'opus-4-7': 'claude-opus-4-7',
   'opus-4-6': 'claude-opus-4-6',
+  'sonnet-5-5': 'claude-sonnet-5-5',
   'sonnet-5': 'claude-sonnet-5',
   'sonnet-4-6': 'claude-sonnet-4-6',
   'haiku-4-5': 'claude-haiku-4-5',
@@ -110,7 +164,7 @@ export const MODEL_CHOICES = Object.keys(MODEL_ALIASES);
 const BARE_FAMILY_RE = /^(fable|opus|sonnet|haiku|best|opusplan)(\[1m\])?$/i;
 const FAMILIES = ['fable', 'opus', 'sonnet', 'haiku'];
 
-/** `fable5.1` / `Fable-5.1` / `fable51` → `fable-5-1`. */
+/** `fable5.1` / `Fable-5.1` / `fable51` → `fable-5-1`; `opus55` / `sonnet5.5` → `opus-5-5` / `sonnet-5-5`. */
 function normalizeAlias(model: string): string {
   const m = model.toLowerCase().match(/^([a-z]+)[-.]?(\d)(?:[-.]?(\d))?$/);
   if (m && FAMILIES.includes(m[1])) return `${m[1]}-${m[2]}${m[3] ? `-${m[3]}` : ''}`;
@@ -127,24 +181,29 @@ export function isBareFamilyAlias(model: string): boolean {
 }
 
 /** Validate + build a spawn command (shared by text and slash surfaces). */
-export function buildSpawnCommand(model: string | undefined, friendly?: string, engine?: string): Command {
+export function buildSpawnCommand(model: string | undefined, friendly?: string, engine?: string, effort?: string): Command {
   if (friendly !== undefined && !FRIENDLY_RE.test(friendly)) {
     return { kind: 'help', error: `bad name \`${friendly}\` — use 1-24 chars of [A-Za-z0-9-]` };
   }
-  if (!model) return { kind: 'help', error: 'model is required — e.g. `spawn fable-5-1`, `spawn opus-5`, `spawn sonnet-5 name=scout`, or `spawn gpt-5.6-luna` (codex)' };
+  if (!model) return { kind: 'help', error: 'model is required — e.g. `spawn fable-5-1`, `spawn opus-5-5`, `spawn sonnet-5-5 name=scout`, or `spawn gpt-5.6-luna` (codex)' };
   if (!MODEL_RE.test(model)) return { kind: 'help', error: `bad model \`${model}\`` };
   if (engine !== undefined && !ENGINES.includes(engine as Engine)) {
     return { kind: 'help', error: `engine \`${engine}\` not supported — ${ENGINES.map((e) => `\`${e}\``).join(' or ')}` };
   }
   const eng: Engine = (engine as Engine | undefined) ?? inferEngine(model);
-  if (eng === 'codex') return { kind: 'spawn', model, friendly, engine: 'codex' };
+  const checkEffort = (resolved: string): Command | undefined => {
+    const error = effort === undefined ? undefined : effortError(effort, eng, resolved);
+    return error ? { kind: 'help', error } : undefined;
+  };
+  if (eng === 'codex') return checkEffort(model) ?? { kind: 'spawn', model, friendly, engine: 'codex', effort };
   if (isBareFamilyAlias(model)) {
     return {
       kind: 'help',
       error: `bare \`${model}\` is retired — say which version: ${MODEL_CHOICES.map((c) => `\`${c}\``).join(', ')}, or a full id like \`claude-fable-5-1\``,
     };
   }
-  return { kind: 'spawn', model: resolveModel(model), friendly, engine: 'claude' };
+  const resolved = resolveModel(model);
+  return checkEffort(resolved) ?? { kind: 'spawn', model: resolved, friendly, engine: 'claude', effort };
 }
 
 export function buildStopCommand(target: string | undefined): Command {
@@ -184,6 +243,7 @@ export function parseCommand(cleanContent: string): Command {
       let model: string | undefined;
       let friendly: string | undefined;
       let engine: string | undefined;
+      let effort: string | undefined;
       for (const tok of tokens.slice(1)) {
         const kv = tok.match(/^([a-z]+)=(.*)$/);
         if (kv) {
@@ -192,6 +252,8 @@ export function parseCommand(cleanContent: string): Command {
             friendly = value;
           } else if (key === 'engine') {
             engine = value.toLowerCase();
+          } else if (key === 'effort') {
+            effort = value.toLowerCase();
           } else if (key === 'model') {
             model = value;
           } else {
@@ -203,7 +265,7 @@ export function parseCommand(cleanContent: string): Command {
           return { kind: 'help', error: `unexpected token \`${tok}\`` };
         }
       }
-      return buildSpawnCommand(model, friendly, engine);
+      return buildSpawnCommand(model, friendly, engine, effort);
     }
     case 'list':
       return { kind: 'list' };

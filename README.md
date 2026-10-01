@@ -14,7 +14,7 @@ self-service fleet.
 
 - Connects to the portal relay as persona **cc-spawner** (webhook persona, no
   Discord bot token).
-- On `@cc-spawner spawn <model> [name=<friendly>]` from an **allow-listed
+- On `@cc-spawner spawn <model> [name=<friendly>] [effort=<level>]` from an **allow-listed
   Discord role holder**, launches an interactive `claude` session in a detached
   tmux session (`cc-<suffix>`), cwd `~/connectome-local` (project auto-memory
   applies), as portal persona **Claude-Code-<suffix>**.
@@ -31,9 +31,9 @@ self-service fleet.
 Slash surface (guilds the bot application is invited to):
 
 ```
-/cc spawn model:opus-5              # random suffix, e.g. Claude-Code-opus-5-3f2a
-/cc spawn model:sonnet-5 name:scout # Claude-Code-sonnet-5-scout
-/cc spawn model:fable-5-1 name:pin  # Claude-Code-fable-5-1-pin
+/cc spawn model:opus-5-5              # random suffix, e.g. Claude-Code-opus-5-5-3f2a
+/cc spawn model:sonnet-5-5 name:scout # Claude-Code-sonnet-5-5-scout
+/cc spawn model:fable-5-1 name:pin effort:ultracode
 /cc list
 /cc stop name:scout                 # autocompletes from running bots
 ```
@@ -41,19 +41,44 @@ Slash surface (guilds the bot application is invited to):
 Portal surface (mention the persona in a guild channel):
 
 ```
-@cc-spawner spawn opus-5 [name=scout]
+@cc-spawner spawn opus-5-5 [name=scout] [effort=xhigh]
 @cc-spawner list
 @cc-spawner stop scout              # `kill` still accepted as an alias
 ```
 
-Models are **explicit versions only**: `fable-5-1`, `fable-5`, `opus-5`,
-`opus-4-8`, `sonnet-5`, `sonnet-4-6`, `haiku-4-5` (expanded to the full
+Models are **explicit versions only**: `fable-5-1`, `fable-5`, `opus-5-5`,
+`opus-5`, `opus-4-8`, `sonnet-5-5`, `sonnet-5`, `sonnet-4-6`, `haiku-4-5`
+(`opus55` / `sonnet5.5` spellings work too; expanded to the full
 `claude-…` id), or any full model id as free text. Bare `fable`/`opus`/
 `sonnet`/`haiku` are refused: the CLI re-points those on upgrade (`fable`
 quietly became Fable 5.1 in Claude Code 2.1.25x) and the model token is part
 of the persona name, so a name has to keep meaning one model. Identities from
 the bare-alias era (`Claude-Code-fable-<x>`) are revived by the explicit
 version of the same family (`spawn fable-5 name=<x>`).
+
+**Reasoning effort** is optional and per spawn: `effort=<level>` (slash:
+`effort:`). Omitted, no flag is passed and the CLI's own default applies.
+
+| Engine | Levels | Passed as |
+|---|---|---|
+| claude | `low`, `medium`, `high`, `xhigh`, `max`, `ultracode` | `--effort <level>` |
+| codex | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` | `-c model_reasoning_effort="<level>"` |
+
+`ultracode` is Claude Code's standing workflow orchestration at xhigh effort.
+It needs a model with xhigh support (the 5.x models, Opus 4.7/4.8) — the
+spawner refuses it elsewhere, because the CLI would silently ignore it — and
+dynamic workflows enabled on the host account, which the spawner cannot check.
+Levels the CLI would silently clamp or drop are refused the same way, so the
+stored level is the one the hand runs at: `xhigh` on the same no-xhigh models,
+`max` on Opus 4.0/4.1/4.5, and any effort on the 3.x models, Sonnet 4.0/4.5
+and Haiku 4.5. Codex support varies per model (e.g.
+`gpt-5.5` stops at `xhigh`) and codex does not validate at launch: an
+unsupported level only fails on the hand's first turn.
+
+Neither CLI restores effort on resume, so it is stored in the registry and
+re-passed: reviving a name without `effort=` keeps its stored level,
+`effort=<level>` replaces it, `effort=default` clears it. Effort is not part
+of the identity. It shows in the spawn reply and in `list` when set.
 
 Blocked sessions: a spawned bot that stops on an **AskUserQuestion** dialog
 or a **tool permission prompt** (Claude Code still asks on a few safety

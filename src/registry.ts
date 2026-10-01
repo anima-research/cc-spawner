@@ -33,6 +33,10 @@ export interface BotEntry {
    *  wake in main.ts, kept for hands launched before the sidecar existed. */
   wake?: 'spawner' | 'cc-cli';
   model: string;
+  /** Reasoning effort this launch ran with (claude `--effort`, codex
+   *  `model_reasoning_effort`). Neither CLI restores it on resume, so a revival
+   *  re-passes it. Absent = the CLI's own default. */
+  effort?: string;
   spawnedBy: { userId: string; username: string };
   spawnedAt: string;
   /** Last PUBLIC portal activity (message/reaction) observed by the spawner. */
